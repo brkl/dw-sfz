@@ -43,6 +43,10 @@ set /a COUNT=0
 set "LINE="
 set /p LINE=Files (or Enter to finish): 
 if not defined LINE goto merge
+rem When several files are dropped at once, Explorer sometimes pastes
+rem their quoted paths back-to-back with no space in between
+rem (""), which would otherwise be seen as a single token below.
+set "LINE=%LINE:""=" "%"
 set "FILES=%FILES% %LINE%"
 for %%F in (%LINE%) do set /a COUNT+=1
 echo   added, total so far: %COUNT%
