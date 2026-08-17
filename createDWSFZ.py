@@ -32,7 +32,7 @@
 import sys, logging
 logging.basicConfig(level=logging.INFO, stream=sys.stderr, format='%(levelname)s: %(message)s')
 
-import re, os, os.path, glob, time, argparse
+import re, os, os.path, glob, time, argparse, textwrap
 
 NOTE_VALUE = {'C': 0, 'D': 2, 'E': 4, 'F': 5, 'G': 7, 'A': 9, 'B': 11}
 
@@ -112,11 +112,34 @@ FILE_RE = re.compile(
 
 def parseArgs():
 	parser = argparse.ArgumentParser(
-		description="Build a simple SFZ instrument from a folder of samples "
-		"autosampled by DirectWave (name_NOTE[_VELOCITY][_RR].wav).")
+		formatter_class=argparse.RawDescriptionHelpFormatter,
+		description=textwrap.dedent("""\
+			Build a simple SFZ instrument from a folder of samples
+			autosampled by DirectWave.
+
+			Samples must be named:
+
+			    name_NOTE[_VELOCITY][_RR].wav
+
+			  NOTE      note pitch, e.g. "D#2" or a plain MIDI number
+			  VELOCITY  max velocity of this layer (optional; the layer's
+			            min velocity is the previous layer's max + 1)
+			  RR        round-robin index for this note/velocity (optional)
+
+			By default, sound bank name, instrument name and output file
+			all default to the folder name, so you can just run:
+
+			    createDWSFZ.py MyPatch
+
+			which reads samples from ./MyPatch and writes ./MyPatch.sfz."""),
+		epilog=textwrap.dedent("""\
+			examples:
+			  createDWSFZ.py MyPatch
+			  createDWSFZ.py samples/Piano -o Piano.sfz --name "Grand Piano"
+			  createDWSFZ.py samples/Drums --rr-only --recursive"""))
 	parser.add_argument('folder', help="Folder containing the .wav samples")
 	parser.add_argument('-o', '--output',
-		help="Output .sfz file (defaults to <folder>.sfz)")
+		help="Output .sfz file, or '-' for stdout (defaults to <folder>.sfz)")
 	parser.add_argument('--name', help="Sound bank name (defaults to the folder name)")
 	parser.add_argument('--instrument', help="Instrument name (defaults to the folder name)")
 	parser.add_argument('--rr-only', action='store_true',
@@ -173,7 +196,12 @@ def buildRegions(samples):
 
 	notes = sorted(byNote.keys())
 	regions = []
-	prevRegionsForKeyRange = None
+	stats = {
+		'notes': len(notes),
+		'velocityLayers': 0,
+		'roundRobinGroups': 0,
+		'maxRoundRobin': 1,
+	}
 	for i, noteNum in enumerate(notes):
 		velLayers = byNote[noteNum]
 		# Sort velocity layers ascending; None (no velocity info) is its own,
@@ -205,9 +233,13 @@ def buildRegions(samples):
 				layersToEmit.append((prevHivel + 1, v, velLayers[v]))
 				prevHivel = v
 
+		stats['velocityLayers'] += len(layersToEmit)
 		for lovel, hivel, files in layersToEmit:
 			files = sorted(files, key=lambda s: (s['rr'] is None, s['rr'], s['file']))
 			seqLength = len(files)
+			if seqLength > 1:
+				stats['roundRobinGroups'] += 1
+				stats['maxRoundRobin'] = max(stats['maxRoundRobin'], seqLength)
 			for idx, s in enumerate(files):
 				region = {
 					'sample': s['file'].replace('\\', '/'),
@@ -241,7 +273,7 @@ def buildRegions(samples):
 	flatRegions = []
 	for _, regionList in regions:
 		flatRegions.extend(regionList)
-	return flatRegions
+	return flatRegions, stats
 
 
 def main():
@@ -254,6 +286,7 @@ def main():
 		args.instrument = folderName
 	if not args.output:
 		args.output = folderName + '.sfz'
+	stdoutOutput = args.output == '-'
 
 	files = findSamples(args.folder, args.recursive)
 	if not files:
@@ -270,7 +303,8 @@ def main():
 		logging.error("No samples could be parsed, aborting")
 		sys.exit(1)
 
-	regions = buildRegions(samples)
+	skipped = len(files) - len(samples)
+	regions, stats = buildRegions(samples)
 
 	soundBank = {
 		'Name': args.name,
@@ -285,7 +319,24 @@ def main():
 		}]
 	}
 
-	exportSFZ(soundBank, args.output)
+	exportSFZ(soundBank, None if stdoutOutput else args.output)
+
+	destination = 'stdout' if stdoutOutput else args.output
+	logging.info("Wrote {} ({} region{})".format(
+		destination, len(regions), '' if len(regions) == 1 else 's'))
+	logging.info("  {} sample{} used, {} skipped".format(
+		len(samples), '' if len(samples) == 1 else 's', skipped))
+	logging.info("  {} note{} mapped".format(
+		stats['notes'], '' if stats['notes'] == 1 else 's'))
+	logging.info("  {} velocity layer{} total ({:.1f} per note on average)".format(
+		stats['velocityLayers'], '' if stats['velocityLayers'] == 1 else 's',
+		stats['velocityLayers'] / stats['notes']))
+	if stats['roundRobinGroups']:
+		logging.info("  {} round-robin group{}, up to {} sample{} each".format(
+			stats['roundRobinGroups'], '' if stats['roundRobinGroups'] == 1 else 's',
+			stats['maxRoundRobin'], '' if stats['maxRoundRobin'] == 1 else 's'))
+	else:
+		logging.info("  no round-robin groups")
 
 
 if __name__ == '__main__':

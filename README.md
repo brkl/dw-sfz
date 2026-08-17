@@ -15,10 +15,14 @@ install the required dependencencies on Debian and derived distributions:
 
 ## Usage
 
-There are two programs included:
+There are three programs included:
 
 * createSFZ.py: Takes audio files as input and writes to stdout a SFZ template
 for them.
+
+* createDWSFZ.py: Takes a folder of samples autosampled by DirectWave and
+writes a SFZ instrument, automatically splitting velocity layers and
+round-robins. See "createDWSFZ.py" below.
 
 * convertSoundBank.py: Process a sound bank and writes another file, possibly
 converted to a different format.
@@ -85,6 +89,51 @@ the instrument name should be no longer than 19 characters.
 
 * If samples contain loops, `loop_mode` instruction should be modified and each
 sample should have `loop_start` and `loop_end` information added.
+
+
+### createDWSFZ.py
+
+createDWSFZ.py is a standalone script (it has no dependency on the other files
+in this repository, so it can be copied and used on its own) that builds a
+SFZ instrument from a folder of samples autosampled by DirectWave.
+
+Samples must be named:
+
+    name_NOTE[_VELOCITY][_RR].wav
+
+* `NOTE` is the note pitch, either English alphabetic notation plus an octave
+  number (e.g. `D#2`) or a plain MIDI number.
+* `VELOCITY` (optional) is the max velocity of that layer's samples. The
+  layer's minimum velocity is one more than the previous (lower) layer's max.
+* `RR` (optional) is the round-robin index for that note/velocity layer.
+
+`VELOCITY` and `RR` don't have to be present on every file. If only one
+trailing number is present it is assumed to be `VELOCITY`; pass `--rr-only`
+if it should be interpreted as the round-robin index instead.
+
+By default the sound bank name, instrument name and output file all default
+to the folder name, so the simplest usage is:
+
+    createDWSFZ.py MyPatch
+
+which reads every `.wav` file in `MyPatch/` and writes `MyPatch.sfz`. Other
+options:
+
+    createDWSFZ.py samples/Piano -o Piano.sfz --name "Grand Piano"
+    createDWSFZ.py samples/Drums --rr-only --recursive
+
+Run `createDWSFZ.py -h` for the full list of options.
+
+Each run prints a short summary to stderr, e.g.:
+
+    INFO: Wrote MyPatch.sfz (42 regions)
+    INFO:   40 samples used, 2 skipped
+    INFO:   12 notes mapped
+    INFO:   18 velocity layers total (1.5 per note on average)
+    INFO:   3 round-robin groups, up to 4 samples each
+
+As with createSFZ.py, the generated SFZ file may need manual editing (e.g. to
+shorten the instrument name for SF2 compatibility, or to add loop points).
 
 
 convertSoundBank.py can be used to validate and convert the SFZ file. When
