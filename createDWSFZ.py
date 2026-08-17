@@ -26,11 +26,81 @@
 # Both VELOCITY and RR are optional. When only one trailing number is
 # present it is assumed to be VELOCITY unless --rr-only is given.
 
+# Standalone, single-file script: no dependency on sfz.py or any
+# third-party module, only the Python standard library.
+
 import sys, logging
 logging.basicConfig(level=logging.INFO, stream=sys.stderr, format='%(levelname)s: %(message)s')
 
 import re, os, os.path, glob, time, argparse
-from sfz import SFZ
+
+NOTE_VALUE = {'C': 0, 'D': 2, 'E': 4, 'F': 5, 'G': 7, 'A': 9, 'B': 11}
+
+
+def convertNote(note):
+	"""Convert a note name ("C4", "F#3", "60", ...) to a MIDI note number,
+	or None if it can't be parsed. Mirrors SFZ.convertNote() from sfz.py."""
+	if re.search(r'^[0-9]{1,3}$', note):
+		noteNum = int(note)
+		return noteNum if 0 <= noteNum <= 127 else None
+
+	match = re.search(r'^([abcdefgABCDEFG])([b#]?)(-?[0-9])$', note)
+	if not match:
+		return None
+	noteNum = NOTE_VALUE[match.group(1).upper()]
+	if match.group(2) == '#':
+		noteNum += 1
+	elif match.group(2) == 'b':
+		noteNum -= 1
+	octave = int(match.group(3))
+	if octave < -1 or octave > 9:
+		return None
+	noteNum += (octave + 1) * 12
+	return noteNum if 0 <= noteNum <= 127 else None
+
+
+def exportSFZ(soundBank, fileName=None):
+	"""Minimal SFZ writer for the subset of opcodes this script produces."""
+	outFile = open(fileName, 'w') if fileName else sys.stdout
+	for hint in ('Name', 'Date', 'URL'):
+		if hint in soundBank:
+			outFile.write('//+ {}: {}\n'.format(hint, soundBank[hint]))
+
+	for instrument in soundBank['instruments']:
+		outFile.write('\n<global>\n')
+		for key in sorted(instrument.keys()):
+			if key == 'groups':
+				continue
+			if key[0].isupper():
+				outFile.write(' //+ {}: {}\n'.format(key, instrument[key]))
+			else:
+				outFile.write(' {}={}\n'.format(key, instrument[key]))
+		for group in instrument['groups']:
+			outFile.write('\n<group>\n')
+			for key in sorted(group.keys()):
+				if key != 'regions':
+					outFile.write(' {}={}\n'.format(key, group[key]))
+			for region in group['regions']:
+				outFile.write('<region>\n')
+				hikey = region.get('hikey', 127)
+				lokey = region.get('lokey', 0)
+				pitch = region.get('pitch_keycenter', 60)
+				if hikey == lokey and hikey == pitch:
+					outFile.write(' key={}\n'.format(hikey))
+				else:
+					if lokey != 0:
+						outFile.write(' lokey={}\n'.format(lokey))
+					if hikey != 127:
+						outFile.write(' hikey={}\n'.format(hikey))
+					if 'pitch_keycenter' in region:
+						outFile.write(' pitch_keycenter={}\n'.format(pitch))
+				for key in sorted(region.keys()):
+					if key in ('hikey', 'lokey', 'pitch_keycenter'):
+						continue
+					outFile.write(' {}={}\n'.format(key, region[key]))
+	if fileName:
+		outFile.close()
+
 
 NOTE_ALPHA = r'[A-Ga-g][#b]?-?[0-9]{1,2}'
 NOTE_NUM = r'[0-9]{1,3}'
@@ -63,17 +133,14 @@ def findSamples(folder, recursive):
 	return sorted(glob.glob(pattern, recursive=recursive), key=str.lower)
 
 
-def parseFileName(fName, sfz, rrOnly):
+def parseFileName(fName, rrOnly):
 	match = FILE_RE.search(os.path.basename(fName))
 	if not match:
 		logging.warning("Can't parse sample name, skipping: {}".format(fName))
 		return None
 
-	try:
-		noteNum = sfz.convertNote(match.group('note'))
-	except Exception:
-		noteNum = None
-	if noteNum is None or noteNum < 0 or noteNum > 127:
+	noteNum = convertNote(match.group('note'))
+	if noteNum is None:
 		logging.warning("Can't guess pitch from file name: {}".format(fName))
 		return None
 
@@ -178,7 +245,6 @@ def buildRegions(samples):
 
 def main():
 	args = parseArgs()
-	sfz = SFZ()
 
 	files = findSamples(args.folder, args.recursive)
 	if not files:
@@ -187,7 +253,7 @@ def main():
 
 	samples = []
 	for fName in files:
-		parsed = parseFileName(fName, sfz, args.rr_only)
+		parsed = parseFileName(fName, args.rr_only)
 		if parsed:
 			samples.append(parsed)
 
@@ -210,8 +276,7 @@ def main():
 		}]
 	}
 
-	sfz.soundBank = soundBank
-	sfz.exportSFZ(args.output)
+	exportSFZ(soundBank, args.output)
 
 
 if __name__ == '__main__':
