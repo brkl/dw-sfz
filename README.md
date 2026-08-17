@@ -27,7 +27,8 @@ layers and round-robins. See "createDWSFZ.py" below.
 * convertSoundBank.py: Process one or more sound banks and write a single
 output file, possibly converted to a different format. This is also how you
 combine several SFZ files (however they were made) into one SF2 soundfont,
-each as its own preset. See "convertSoundBank.py" below.
+each as its own preset. See "convertSoundBank.py" below. On Windows,
+`CombineToSF2.bat` gives you a drag-and-drop front end for this.
 
 
 createSFZ.py is useful to create a new sound bank in SFZ format. It accepts a
@@ -183,6 +184,13 @@ produce (e.g. files made by other software), preserving anything it doesn't
 specifically need instead of rejecting the file.
 
 Run `convertSoundBank.py -h` for the full list of options.
+
+On Windows, `CombineToSF2.bat` gives you an interactive front end for the
+combine feature, useful when the files you want to combine live in several
+different folders: run it, type a bank name (and optionally an output path),
+then drag and drop `.sfz` files onto the console window -- one at a time or
+several at once -- pressing Enter after each drop. Press Enter with nothing
+dropped when you're done, and it runs convertSoundBank.py for you.
 
 
 ## Limitations
