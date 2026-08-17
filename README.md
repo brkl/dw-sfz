@@ -154,6 +154,10 @@ shorten the instrument name for SF2 compatibility, or to add loop points).
 
 ### mergeSFZ.py
 
+Like createDWSFZ.py, mergeSFZ.py is a standalone script with no dependency
+on the other files in this repository (it has its own, more permissive SFZ
+reader, so it isn't limited to files produced by these tools).
+
 mergeSFZ.py combines any number of SFZ files into a single one:
 
     mergeSFZ.py Piano.sfz Drums.sfz -o Combined.sfz

@@ -25,12 +25,256 @@
 # "pianoA_Grand Piano") so instruments never collide between files; if a
 # collision still happens (e.g. two instruments from the same file with the
 # same name), a number is appended.
+#
+# Standalone, single-file script: no dependency on sfz.py or any
+# third-party module, only the Python standard library. Note that the
+# built-in SFZ reader below is deliberately permissive: unlike sfz.py, it
+# passes through any opcode or hint it doesn't specifically know about
+# instead of dropping it, so merging is not limited to files this
+# repository's own tools produced.
 
 import sys, logging
 logging.basicConfig(level=logging.INFO, stream=sys.stderr, format='%(levelname)s: %(message)s')
 
-import os, os.path, time, argparse, textwrap, copy
-from sfz import SFZ
+import re, os, os.path, time, argparse, textwrap, copy
+
+NOTE_VALUE = {'C': 0, 'D': 2, 'E': 4, 'F': 5, 'G': 7, 'A': 9, 'B': 11}
+
+
+def convertNote(note):
+	"""Convert a note name ("C4", "F#3", "60", ...) to a MIDI note number,
+	or None if it can't be parsed."""
+	if re.search(r'^[0-9]{1,3}$', note):
+		noteNum = int(note)
+		return noteNum if 0 <= noteNum <= 127 else None
+
+	match = re.search(r'^([abcdefgABCDEFG])([b#]?)(-?[0-9])$', note)
+	if not match:
+		return None
+	noteNum = NOTE_VALUE[match.group(1).upper()]
+	if match.group(2) == '#':
+		noteNum += 1
+	elif match.group(2) == 'b':
+		noteNum -= 1
+	octave = int(match.group(3))
+	if octave < -1 or octave > 9:
+		return None
+	noteNum += (octave + 1) * 12
+	return noteNum if 0 <= noteNum <= 127 else None
+
+
+class SFZParseError(Exception):
+	pass
+
+
+HINT_RE = re.compile(r'//\+ ([a-zA-Z0-9_&.+-]+): +(\S.*)$')
+NEXT_OPCODE_RE = re.compile(r'\s[a-zA-Z0-9_]+=')
+
+
+class SFZReader:
+	"""Minimal, permissive SFZ parser: preserves any opcode or hint found,
+	without validating or restricting them to a known set."""
+
+	def __init__(self):
+		self.soundBank = {'instruments': []}
+		self.instrument = {'groups': []}
+		self.group = {'regions': []}
+		self.region = {}
+		self.insideInstrument = False
+		self.insideGroup = False
+		self.insideRegion = False
+
+	def parseFile(self, fileName):
+		path = os.path.dirname(fileName)
+		if path:
+			self.soundBank['Path'] = path
+		try:
+			inFile = open(fileName, 'r')
+		except OSError:
+			logging.error("Can not open file: {}".format(fileName))
+			return False
+		lineNumber = 0
+		for line in inFile:
+			lineNumber += 1
+			try:
+				self.processLine(line)
+			except SFZParseError as e:
+				logging.error("Error on line {} of file {}: {}".format(lineNumber, fileName, e))
+				inFile.close()
+				return False
+		inFile.close()
+		self.commitRegion()
+		self.commitGroup()
+		self.commitInstrument()
+		return True
+
+	def processLine(self, line):
+		match = HINT_RE.search(line)
+		if match:
+			self.addOpcode(match.group(1), match.group(2).rstrip())
+			return
+
+		line = line.partition('//')[0].rstrip()
+		while True:
+			line = line.lstrip()
+			if len(line) == 0:
+				return
+
+			if line[0] == '<':
+				end = line.find('>')
+				if end == -1:
+					raise SFZParseError("Malformed header (missing '>')")
+				header = line[1:end]
+				if len(header) < 1:
+					raise SFZParseError("Empty header")
+				self.processHeader(header)
+				line = line[end + 1:]
+				continue
+
+			end = line.find('=')
+			if end == -1:
+				raise SFZParseError("Malformed line (missing '=')")
+			opcode = line[:end]
+			if len(opcode) < 1:
+				raise SFZParseError("Empty opcode name")
+			line = line[end + 1:]
+			if len(line) == 0:
+				raise SFZParseError("Missing opcode value")
+
+			match = re.search('[=<]', line)
+			if not match:
+				self.processOpcode(opcode, line.rstrip())
+				return
+
+			if line[match.start()] == '=':
+				nextOpcode = NEXT_OPCODE_RE.search(line)
+				if not nextOpcode:
+					raise SFZParseError("Malformed line")
+				value = line[:nextOpcode.start()].rstrip()
+				line = line[nextOpcode.start():]
+			else:
+				value = line[:match.start()].rstrip()
+				line = line[match.start():]
+
+			self.processOpcode(opcode, value)
+
+	def processHeader(self, header):
+		if header == 'global':
+			self.commitRegion()
+			self.commitGroup()
+			self.commitInstrument()
+			self.insideInstrument = True
+			self.insideGroup = False
+			self.insideRegion = False
+		elif header == 'group':
+			self.commitRegion()
+			self.commitGroup()
+			self.insideInstrument = True
+			self.insideGroup = True
+			self.insideRegion = False
+		elif header == 'region':
+			self.commitRegion()
+			self.insideInstrument = True
+			self.insideRegion = True
+		else:
+			raise SFZParseError("Unknown header: <{}>".format(header))
+
+	def processOpcode(self, opcode, value):
+		lower = opcode.lower()
+		if lower == 'sample':
+			value = value.replace('\\', '/')
+		elif lower == 'key':
+			noteNum = convertNote(value)
+			if noteNum is None:
+				raise SFZParseError("Invalid note for 'key': {}".format(value))
+			self.addOpcode('lokey', noteNum)
+			self.addOpcode('hikey', noteNum)
+			self.addOpcode('pitch_keycenter', noteNum)
+			return
+		elif lower in ('lokey', 'hikey', 'pitch_keycenter'):
+			noteNum = convertNote(value)
+			if noteNum is None:
+				raise SFZParseError("Invalid note for '{}': {}".format(opcode, value))
+			value = noteNum
+		self.addOpcode(opcode, value)
+
+	def addOpcode(self, opcode, value):
+		if self.insideRegion:
+			self.region[opcode] = value
+		elif self.insideGroup:
+			self.group[opcode] = value
+		elif self.insideInstrument:
+			self.instrument[opcode] = value
+		else:
+			self.soundBank[opcode] = value
+
+	def commitRegion(self):
+		if len(self.region) > 0:
+			self.group['regions'].append(self.region)
+		self.region = {}
+
+	def commitGroup(self):
+		if len(self.group['regions']) > 0:
+			self.instrument['groups'].append(self.group)
+		self.group = {'regions': []}
+
+	def commitInstrument(self):
+		if len(self.instrument['groups']) > 0:
+			self.soundBank['instruments'].append(self.instrument)
+		self.instrument = {'groups': []}
+
+
+def renderHeader(soundBank):
+	lines = []
+	for hint in ('Name', 'Date', 'URL'):
+		if hint in soundBank:
+			lines.append('//+ {}: {}\n'.format(hint, soundBank[hint]))
+	return ''.join(lines)
+
+
+def renderInstrument(instrument):
+	lines = []
+	lines.append('\n<global>\n')
+	for key in sorted(instrument.keys()):
+		if key == 'groups':
+			continue
+		if key[0].isupper():
+			lines.append(' //+ {}: {}\n'.format(key, instrument[key]))
+		else:
+			lines.append(' {}={}\n'.format(key, instrument[key]))
+	for group in instrument['groups']:
+		lines.append('\n<group>\n')
+		for key in sorted(group.keys()):
+			if key != 'regions':
+				lines.append(' {}={}\n'.format(key, group[key]))
+		for region in group['regions']:
+			lines.append('<region>\n')
+			hikey = region.get('hikey', 127)
+			lokey = region.get('lokey', 0)
+			pitch = region.get('pitch_keycenter', 60)
+			if hikey == lokey and hikey == pitch:
+				lines.append(' key={}\n'.format(hikey))
+			else:
+				if lokey != 0:
+					lines.append(' lokey={}\n'.format(lokey))
+				if hikey != 127:
+					lines.append(' hikey={}\n'.format(hikey))
+				if 'pitch_keycenter' in region:
+					lines.append(' pitch_keycenter={}\n'.format(pitch))
+			for key in sorted(region.keys()):
+				if key in ('hikey', 'lokey', 'pitch_keycenter'):
+					continue
+				lines.append(' {}={}\n'.format(key, region[key]))
+	return ''.join(lines)
+
+
+def exportSFZ(soundBank, fileName=None):
+	outFile = open(fileName, 'w') if fileName else sys.stdout
+	outFile.write(renderHeader(soundBank))
+	for instrument in soundBank['instruments']:
+		outFile.write(renderInstrument(instrument))
+	if fileName:
+		outFile.close()
 
 
 def parseArgs():
@@ -62,11 +306,10 @@ def parseArgs():
 
 
 def loadBank(fileName):
-	sfz = SFZ()
-	if not sfz.importSFZ(fileName):
-		logging.error("Could not read: {}".format(fileName))
+	reader = SFZReader()
+	if not reader.parseFile(fileName):
 		return None
-	return sfz.soundBank
+	return reader.soundBank
 
 
 def uniqueName(name, used):
@@ -164,10 +407,7 @@ def main():
 			'instruments': allInstruments,
 		}
 
-	sfz = SFZ()
-	sfz.soundBank = mergedBank
-	if not sfz.exportSFZ(args.output):
-		sys.exit(1)
+	exportSFZ(mergedBank, args.output)
 
 	totalInstruments = sum(len(v) for v in groups.values())
 	logging.info("Wrote {} ({} file{} merged, {} instrument{}, {} bank{})".format(
