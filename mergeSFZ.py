@@ -326,11 +326,15 @@ def uniqueName(name, used):
 
 def rebaseSample(sampleValue, sourceDir, outputDir):
 	sampleValue = sampleValue.replace('\\', '/')
-	absPath = sampleValue if os.path.isabs(sampleValue) \
-		else os.path.normpath(os.path.join(sourceDir, sampleValue))
 	if os.path.isabs(sampleValue):
+		return sampleValue
+	absPath = os.path.normpath(os.path.join(sourceDir, sampleValue))
+	try:
+		return os.path.relpath(absPath, outputDir).replace('\\', '/')
+	except ValueError:
+		# On Windows, relpath() fails if sourceDir and outputDir are on
+		# different drives; fall back to an absolute path in that case.
 		return absPath.replace('\\', '/')
-	return os.path.relpath(absPath, outputDir).replace('\\', '/')
 
 
 def rebaseSamplePaths(instrument, sourceDir, outputDir):
