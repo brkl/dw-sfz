@@ -122,6 +122,19 @@ options:
     createDWSFZ.py samples/Piano -o Piano.sfz --name "Grand Piano"
     createDWSFZ.py samples/Drums --rr-only --recursive
 
+If the output file already exists, the new instrument is appended to it
+instead of replacing it, which lets you build up a multi-instrument bank one
+folder at a time:
+
+    createDWSFZ.py samples/Piano -o Bank.sfz --name "My Bank"
+    createDWSFZ.py samples/Drums -o Bank.sfz
+
+The instrument name is always derived from the folder (or `--instrument`).
+The bank name is resolved as: an explicit `--name`, if given; otherwise the
+existing bank's name when appending; otherwise the folder name. In other
+words, appending an instrument never changes the bank's name unless you pass
+`--name` explicitly.
+
 Run `createDWSFZ.py -h` for the full list of options.
 
 Each run prints a short summary to stderr, e.g.:

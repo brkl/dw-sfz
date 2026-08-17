@@ -59,47 +59,75 @@ def convertNote(note):
 	return noteNum if 0 <= noteNum <= 127 else None
 
 
+def renderHeader(soundBank):
+	"""Render the top-level //+ hints (Name/Date/URL) as text."""
+	lines = []
+	for hint in ('Name', 'Date', 'URL'):
+		if hint in soundBank:
+			lines.append('//+ {}: {}\n'.format(hint, soundBank[hint]))
+	return ''.join(lines)
+
+
+def renderInstrument(instrument):
+	"""Render a single instrument (<global>/<group>/<region> blocks) as text."""
+	lines = []
+	lines.append('\n<global>\n')
+	for key in sorted(instrument.keys()):
+		if key == 'groups':
+			continue
+		if key[0].isupper():
+			lines.append(' //+ {}: {}\n'.format(key, instrument[key]))
+		else:
+			lines.append(' {}={}\n'.format(key, instrument[key]))
+	for group in instrument['groups']:
+		lines.append('\n<group>\n')
+		for key in sorted(group.keys()):
+			if key != 'regions':
+				lines.append(' {}={}\n'.format(key, group[key]))
+		for region in group['regions']:
+			lines.append('<region>\n')
+			hikey = region.get('hikey', 127)
+			lokey = region.get('lokey', 0)
+			pitch = region.get('pitch_keycenter', 60)
+			if hikey == lokey and hikey == pitch:
+				lines.append(' key={}\n'.format(hikey))
+			else:
+				if lokey != 0:
+					lines.append(' lokey={}\n'.format(lokey))
+				if hikey != 127:
+					lines.append(' hikey={}\n'.format(hikey))
+				if 'pitch_keycenter' in region:
+					lines.append(' pitch_keycenter={}\n'.format(pitch))
+			for key in sorted(region.keys()):
+				if key in ('hikey', 'lokey', 'pitch_keycenter'):
+					continue
+				lines.append(' {}={}\n'.format(key, region[key]))
+	return ''.join(lines)
+
+
 def exportSFZ(soundBank, fileName=None):
 	"""Minimal SFZ writer for the subset of opcodes this script produces."""
 	outFile = open(fileName, 'w') if fileName else sys.stdout
-	for hint in ('Name', 'Date', 'URL'):
-		if hint in soundBank:
-			outFile.write('//+ {}: {}\n'.format(hint, soundBank[hint]))
-
+	outFile.write(renderHeader(soundBank))
 	for instrument in soundBank['instruments']:
-		outFile.write('\n<global>\n')
-		for key in sorted(instrument.keys()):
-			if key == 'groups':
-				continue
-			if key[0].isupper():
-				outFile.write(' //+ {}: {}\n'.format(key, instrument[key]))
-			else:
-				outFile.write(' {}={}\n'.format(key, instrument[key]))
-		for group in instrument['groups']:
-			outFile.write('\n<group>\n')
-			for key in sorted(group.keys()):
-				if key != 'regions':
-					outFile.write(' {}={}\n'.format(key, group[key]))
-			for region in group['regions']:
-				outFile.write('<region>\n')
-				hikey = region.get('hikey', 127)
-				lokey = region.get('lokey', 0)
-				pitch = region.get('pitch_keycenter', 60)
-				if hikey == lokey and hikey == pitch:
-					outFile.write(' key={}\n'.format(hikey))
-				else:
-					if lokey != 0:
-						outFile.write(' lokey={}\n'.format(lokey))
-					if hikey != 127:
-						outFile.write(' hikey={}\n'.format(hikey))
-					if 'pitch_keycenter' in region:
-						outFile.write(' pitch_keycenter={}\n'.format(pitch))
-				for key in sorted(region.keys()):
-					if key in ('hikey', 'lokey', 'pitch_keycenter'):
-						continue
-					outFile.write(' {}={}\n'.format(key, region[key]))
+		outFile.write(renderInstrument(instrument))
 	if fileName:
 		outFile.close()
+
+
+NAME_HINT_RE = re.compile(r'^//\+ Name: *(.*?) *$', re.MULTILINE)
+
+
+def readExistingBank(fileName):
+	"""If fileName exists, return its raw text and its Name hint (or None
+	for the name if it has none). Returns (None, None) if the file doesn't
+	exist yet."""
+	if not fileName or fileName == '-' or not os.path.exists(fileName):
+		return None, None
+	with open(fileName, 'r') as f:
+		content = f.read()
+	match = NAME_HINT_RE.search(content)
+	return content, (match.group(1) if match else None)
 
 
 NOTE_ALPHA = r'[A-Ga-g][#b]?-?[0-9]{1,2}'
@@ -131,16 +159,28 @@ def parseArgs():
 
 			    createDWSFZ.py MyPatch
 
-			which reads samples from ./MyPatch and writes ./MyPatch.sfz."""),
+			which reads samples from ./MyPatch and writes ./MyPatch.sfz.
+
+			If the output file already exists, the new instrument is
+			appended to it instead of replacing it (e.g. to build up a
+			multi-instrument bank one folder at a time). The instrument
+			name is still derived from the folder; the bank name is kept
+			as-is unless --name is given explicitly."""),
 		epilog=textwrap.dedent("""\
 			examples:
 			  createDWSFZ.py MyPatch
 			  createDWSFZ.py samples/Piano -o Piano.sfz --name "Grand Piano"
-			  createDWSFZ.py samples/Drums --rr-only --recursive"""))
+			  createDWSFZ.py samples/Drums --rr-only --recursive
+
+			  # build a multi-instrument bank:
+			  createDWSFZ.py samples/Piano -o Bank.sfz --name "My Bank"
+			  createDWSFZ.py samples/Drums -o Bank.sfz"""))
 	parser.add_argument('folder', help="Folder containing the .wav samples")
 	parser.add_argument('-o', '--output',
 		help="Output .sfz file, or '-' for stdout (defaults to <folder>.sfz)")
-	parser.add_argument('--name', help="Sound bank name (defaults to the folder name)")
+	parser.add_argument('--name',
+		help="Sound bank name (defaults to the folder name, or to the "
+		"existing bank's name when appending)")
 	parser.add_argument('--instrument', help="Instrument name (defaults to the folder name)")
 	parser.add_argument('--rr-only', action='store_true',
 		help="Treat a single trailing number as a round-robin index instead of a velocity")
@@ -278,15 +318,25 @@ def buildRegions(samples):
 
 def main():
 	args = parseArgs()
+	explicitName = args.name is not None
 
 	folderName = os.path.basename(os.path.normpath(args.folder))
-	if not args.name:
-		args.name = folderName
 	if not args.instrument:
 		args.instrument = folderName
 	if not args.output:
 		args.output = folderName + '.sfz'
 	stdoutOutput = args.output == '-'
+
+	existingContent, existingName = readExistingBank(args.output)
+	appendMode = existingContent is not None
+
+	if explicitName:
+		bankName = args.name
+	elif appendMode and existingName:
+		bankName = existingName
+	else:
+		bankName = folderName
+	args.name = bankName
 
 	files = findSamples(args.folder, args.recursive)
 	if not files:
@@ -306,24 +356,44 @@ def main():
 	skipped = len(files) - len(samples)
 	regions, stats = buildRegions(samples)
 
-	soundBank = {
-		'Name': args.name,
-		'Date': time.strftime("%Y-%m-%d"),
-		'instruments': [{
-			'Instrument': args.instrument,
-			'ampeg_release': '0.5',
-			'groups': [{
-				'loop_mode': 'no_loop',
-				'regions': regions,
-			}]
+	instrument = {
+		'Instrument': args.instrument,
+		'ampeg_release': '0.5',
+		'groups': [{
+			'loop_mode': 'no_loop',
+			'regions': regions,
 		}]
 	}
 
-	exportSFZ(soundBank, None if stdoutOutput else args.output)
+	if appendMode:
+		newContent = existingContent
+		if bankName != existingName:
+			replacement = '//+ Name: {}'.format(bankName)
+			if existingName is not None:
+				newContent = NAME_HINT_RE.sub(lambda m: replacement, newContent, count=1)
+			else:
+				newContent = replacement + '\n' + newContent
+		if not newContent.endswith('\n'):
+			newContent += '\n'
+		newContent += renderInstrument(instrument)
+		with open(args.output, 'w') as f:
+			f.write(newContent)
+	else:
+		soundBank = {
+			'Name': bankName,
+			'Date': time.strftime("%Y-%m-%d"),
+			'instruments': [instrument],
+		}
+		exportSFZ(soundBank, None if stdoutOutput else args.output)
 
 	destination = 'stdout' if stdoutOutput else args.output
-	logging.info("Wrote {} ({} region{})".format(
-		destination, len(regions), '' if len(regions) == 1 else 's'))
+	if appendMode:
+		logging.info("Appended instrument '{}' to bank '{}' in {} ({} region{})".format(
+			args.instrument, bankName, destination, len(regions),
+			'' if len(regions) == 1 else 's'))
+	else:
+		logging.info("Wrote {} ({} region{})".format(
+			destination, len(regions), '' if len(regions) == 1 else 's'))
 	logging.info("  {} sample{} used, {} skipped".format(
 		len(samples), '' if len(samples) == 1 else 's', skipped))
 	logging.info("  {} note{} mapped".format(
