@@ -15,20 +15,19 @@ install the required dependencencies on Debian and derived distributions:
 
 ## Usage
 
-There are four programs included:
+There are three programs included:
 
 * createSFZ.py: Takes audio files as input and writes to stdout a SFZ template
 for them.
 
 * createDWSFZ.py: Takes a folder of samples autosampled by DirectWave and
-writes a SFZ instrument, automatically splitting velocity layers and
-round-robins. See "createDWSFZ.py" below.
+writes a single, standard SFZ instrument, automatically splitting velocity
+layers and round-robins. See "createDWSFZ.py" below.
 
-* mergeSFZ.py: Combines several SFZ files into a single one. See "mergeSFZ.py"
-below.
-
-* convertSoundBank.py: Process a sound bank and writes another file, possibly
-converted to a different format.
+* convertSoundBank.py: Process one or more sound banks and write a single
+output file, possibly converted to a different format. This is also how you
+combine several SFZ files (however they were made) into one SF2 soundfont,
+each as its own preset. See "convertSoundBank.py" below.
 
 
 createSFZ.py is useful to create a new sound bank in SFZ format. It accepts a
@@ -125,18 +124,10 @@ options:
     createDWSFZ.py samples/Piano -o Piano.sfz --name "Grand Piano"
     createDWSFZ.py samples/Drums --rr-only --recursive
 
-If the output file already exists, the new instrument is appended to it
-instead of replacing it, which lets you build up a multi-instrument bank one
-folder at a time:
-
-    createDWSFZ.py samples/Piano -o Bank.sfz --name "My Bank"
-    createDWSFZ.py samples/Drums -o Bank.sfz
-
-The instrument name is always derived from the folder (or `--instrument`).
-The bank name is resolved as: an explicit `--name`, if given; otherwise the
-existing bank's name when appending; otherwise the folder name. In other
-words, appending an instrument never changes the bank's name unless you pass
-`--name` explicitly.
+Each run always writes a single, standard, spec-compliant SFZ instrument (no
+proprietary multi-instrument tricks) -- to combine several of these, or any
+other ready-made `.sfz` files, into one soundfont, see convertSoundBank.py
+below.
 
 Run `createDWSFZ.py -h` for the full list of options.
 
@@ -152,57 +143,46 @@ As with createSFZ.py, the generated SFZ file may need manual editing (e.g. to
 shorten the instrument name for SF2 compatibility, or to add loop points).
 
 
-### mergeSFZ.py
+### convertSoundBank.py
 
-Like createDWSFZ.py, mergeSFZ.py is a standalone script with no dependency
-on the other files in this repository (it has its own, more permissive SFZ
-reader, so it isn't limited to files produced by these tools).
-
-mergeSFZ.py combines any number of SFZ files into a single one:
-
-    mergeSFZ.py Piano.sfz Drums.sfz -o Combined.sfz
-
-Instrument names are always prefixed with their source file's name (e.g.
-`Piano_Grand Piano`) so instruments never collide between files; if a
-collision still happens, a number is appended.
-
-Bank names ("//+ Name:" hints) are handled like this:
-
-* If `--name` is given, every instrument from every input file is put into a
-  single bank with that name, discarding each file's own bank name:
-
-      mergeSFZ.py Piano.sfz Drums.sfz -o Combined.sfz --name "My Bank"
-
-* Otherwise, each input file keeps its own bank name. Files that share the
-  same bank name are combined under that one bank; files with different bank
-  names each keep their own bank inside the merged file (the SFZ format has
-  only one bank name per file, so in this case each bank's first instrument
-  carries a `//+ Name:` annotation instead of a single top-of-file one).
-
-Sample paths are automatically rewritten to stay correct relative to the
-output file's location, even if the input files live in different folders.
-
-Run `mergeSFZ.py -h` for the full list of options.
-
-On Windows, `MergeSFZ.bat` gives you a drag-and-drop front end for
-mergeSFZ.py: drop one or more `.sfz` files onto it, optionally type a bank
-name when prompted (leave empty to keep each file's own bank name), and it
-writes `Merged.sfz` next to the first dropped file.
-
-
-convertSoundBank.py can be used to validate and convert the SFZ file. When
+convertSoundBank.py can be used to validate and convert a SFZ file. When
 converted to SF2, global options included within `<global>` will be converted
 to global instrument options that can be overriden in subsequent groups or
 regions.
 
-This example will create a SF2 sound font.
+This example will create a SF2 sound font from a single SFZ file:
 
     convertSoundBank.py grandPiano.sfz grandPiano.sf2
 
 The resulting file grandPiano.sf2 should be ready to be used with fluidsynth,
-qsynth, or any other program that handle SF2 files. It can also be open with a
-sound font editor (swami, polyphone...) and inspect or continue editing its
-contents.
+qsynth, or any other program that handles SF2 files. It can also be opened
+with a sound font editor (swami, polyphone...) to inspect or continue editing
+its contents.
+
+You can also give it several `.sfz` files at once (however they were made --
+by createDWSFZ.py or anything else) to combine them into a single `.sf2`
+soundfont, with each input file becoming its own separate preset (never
+layered or merged together):
+
+    convertSoundBank.py Piano.sfz Drums.sfz Combined.sf2
+    convertSoundBank.py Piano.sfz Drums.sfz Combined.sf2 --name "My Bank"
+
+The last path is always the output file; combining is only supported when
+that output is `.sf2` (there is no standard way to represent several
+separate instruments inside one `.sfz` file, so this tool won't produce one).
+Each preset's name comes from the source file's own instrument/bank name if
+it has one, otherwise its file name, truncated and de-duplicated with a
+numeric suffix as needed to fit SF2's 19-character limit. Sample files are
+referenced from their original location and are never moved or copied, even
+if the input files live in entirely different folders (or drives).
+
+`convertSoundBank.py`'s SFZ reader is more permissive than a strict
+implementation of the format: it accepts real-world `.sfz` files with
+opcodes or values outside what this repository's own tools would ever
+produce (e.g. files made by other software), preserving anything it doesn't
+specifically need instead of rejecting the file.
+
+Run `convertSoundBank.py -h` for the full list of options.
 
 
 ## Limitations

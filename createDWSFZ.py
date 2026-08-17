@@ -115,21 +115,6 @@ def exportSFZ(soundBank, fileName=None):
 		outFile.close()
 
 
-NAME_HINT_RE = re.compile(r'^//\+ Name: *(.*?) *$', re.MULTILINE)
-
-
-def readExistingBank(fileName):
-	"""If fileName exists, return its raw text and its Name hint (or None
-	for the name if it has none). Returns (None, None) if the file doesn't
-	exist yet."""
-	if not fileName or fileName == '-' or not os.path.exists(fileName):
-		return None, None
-	with open(fileName, 'r') as f:
-		content = f.read()
-	match = NAME_HINT_RE.search(content)
-	return content, (match.group(1) if match else None)
-
-
 NOTE_ALPHA = r'[A-Ga-g][#b]?-?[0-9]{1,2}'
 NOTE_NUM = r'[0-9]{1,3}'
 FILE_RE = re.compile(
@@ -159,28 +144,21 @@ def parseArgs():
 
 			    createDWSFZ.py MyPatch
 
-			which reads samples from ./MyPatch and writes ./MyPatch.sfz.
+			which reads samples from ./MyPatch and writes ./MyPatch.sfz,
+			a single, standard, spec-compliant SFZ instrument.
 
-			If the output file already exists, the new instrument is
-			appended to it instead of replacing it (e.g. to build up a
-			multi-instrument bank one folder at a time). The instrument
-			name is still derived from the folder; the bank name is kept
-			as-is unless --name is given explicitly."""),
+			To combine several such .sfz files (or any other ready-made
+			ones) into one .sf2 soundfont with a separate preset per
+			file, use convertSoundBank.py."""),
 		epilog=textwrap.dedent("""\
 			examples:
 			  createDWSFZ.py MyPatch
 			  createDWSFZ.py samples/Piano -o Piano.sfz --name "Grand Piano"
-			  createDWSFZ.py samples/Drums --rr-only --recursive
-
-			  # build a multi-instrument bank:
-			  createDWSFZ.py samples/Piano -o Bank.sfz --name "My Bank"
-			  createDWSFZ.py samples/Drums -o Bank.sfz"""))
+			  createDWSFZ.py samples/Drums --rr-only --recursive"""))
 	parser.add_argument('folder', help="Folder containing the .wav samples")
 	parser.add_argument('-o', '--output',
 		help="Output .sfz file, or '-' for stdout (defaults to <folder>.sfz)")
-	parser.add_argument('--name',
-		help="Sound bank name (defaults to the folder name, or to the "
-		"existing bank's name when appending)")
+	parser.add_argument('--name', help="Sound bank name (defaults to the folder name)")
 	parser.add_argument('--instrument', help="Instrument name (defaults to the folder name)")
 	parser.add_argument('--rr-only', action='store_true',
 		help="Treat a single trailing number as a round-robin index instead of a velocity")
@@ -228,7 +206,20 @@ def parseFileName(fName, rrOnly):
 	return {'file': fName, 'note': noteNum, 'velocity': velocity, 'rr': roundRobin}
 
 
-def buildRegions(samples):
+def toOutputRelativePath(filePath, outputDir):
+	"""Sample paths in a .sfz file are resolved relative to that file's own
+	directory, so rewrite filePath (as found relative to the current
+	working directory) to be relative to outputDir instead."""
+	absPath = os.path.abspath(filePath)
+	try:
+		return os.path.relpath(absPath, outputDir).replace('\\', '/')
+	except ValueError:
+		# On Windows, relpath() fails if the sample and the output file are
+		# on different drives; fall back to an absolute path in that case.
+		return absPath.replace('\\', '/')
+
+
+def buildRegions(samples, outputDir):
 	# Group by note, then by velocity layer.
 	byNote = {}
 	for s in samples:
@@ -282,7 +273,7 @@ def buildRegions(samples):
 				stats['maxRoundRobin'] = max(stats['maxRoundRobin'], seqLength)
 			for idx, s in enumerate(files):
 				region = {
-					'sample': s['file'].replace('\\', '/'),
+					'sample': toOutputRelativePath(s['file'], outputDir),
 					'pitch_keycenter': noteNum,
 					'lokey': lokey,
 					'hikey': noteNum,  # patched to real hikey below
@@ -318,25 +309,15 @@ def buildRegions(samples):
 
 def main():
 	args = parseArgs()
-	explicitName = args.name is not None
 
 	folderName = os.path.basename(os.path.normpath(args.folder))
+	if not args.name:
+		args.name = folderName
 	if not args.instrument:
 		args.instrument = folderName
 	if not args.output:
 		args.output = folderName + '.sfz'
 	stdoutOutput = args.output == '-'
-
-	existingContent, existingName = readExistingBank(args.output)
-	appendMode = existingContent is not None
-
-	if explicitName:
-		bankName = args.name
-	elif appendMode and existingName:
-		bankName = existingName
-	else:
-		bankName = folderName
-	args.name = bankName
 
 	files = findSamples(args.folder, args.recursive)
 	if not files:
@@ -354,7 +335,8 @@ def main():
 		sys.exit(1)
 
 	skipped = len(files) - len(samples)
-	regions, stats = buildRegions(samples)
+	outputDir = os.getcwd() if stdoutOutput else os.path.dirname(os.path.abspath(args.output))
+	regions, stats = buildRegions(samples, outputDir)
 
 	instrument = {
 		'Instrument': args.instrument,
@@ -365,35 +347,16 @@ def main():
 		}]
 	}
 
-	if appendMode:
-		newContent = existingContent
-		if bankName != existingName:
-			replacement = '//+ Name: {}'.format(bankName)
-			if existingName is not None:
-				newContent = NAME_HINT_RE.sub(lambda m: replacement, newContent, count=1)
-			else:
-				newContent = replacement + '\n' + newContent
-		if not newContent.endswith('\n'):
-			newContent += '\n'
-		newContent += renderInstrument(instrument)
-		with open(args.output, 'w') as f:
-			f.write(newContent)
-	else:
-		soundBank = {
-			'Name': bankName,
-			'Date': time.strftime("%Y-%m-%d"),
-			'instruments': [instrument],
-		}
-		exportSFZ(soundBank, None if stdoutOutput else args.output)
+	soundBank = {
+		'Name': args.name,
+		'Date': time.strftime("%Y-%m-%d"),
+		'instruments': [instrument],
+	}
+	exportSFZ(soundBank, None if stdoutOutput else args.output)
 
 	destination = 'stdout' if stdoutOutput else args.output
-	if appendMode:
-		logging.info("Appended instrument '{}' to bank '{}' in {} ({} region{})".format(
-			args.instrument, bankName, destination, len(regions),
-			'' if len(regions) == 1 else 's'))
-	else:
-		logging.info("Wrote {} ({} region{})".format(
-			destination, len(regions), '' if len(regions) == 1 else 's'))
+	logging.info("Wrote {} ({} region{})".format(
+		destination, len(regions), '' if len(regions) == 1 else 's'))
 	logging.info("  {} sample{} used, {} skipped".format(
 		len(samples), '' if len(samples) == 1 else 's', skipped))
 	logging.info("  {} note{} mapped".format(
