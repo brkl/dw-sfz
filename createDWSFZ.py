@@ -115,9 +115,10 @@ def parseArgs():
 		description="Build a simple SFZ instrument from a folder of samples "
 		"autosampled by DirectWave (name_NOTE[_VELOCITY][_RR].wav).")
 	parser.add_argument('folder', help="Folder containing the .wav samples")
-	parser.add_argument('-o', '--output', help="Output .sfz file (defaults to stdout)")
-	parser.add_argument('--name', default='Unnamed sound bank', help="Sound bank name")
-	parser.add_argument('--instrument', default='Unnamed instrument', help="Instrument name")
+	parser.add_argument('-o', '--output',
+		help="Output .sfz file (defaults to <folder>.sfz)")
+	parser.add_argument('--name', help="Sound bank name (defaults to the folder name)")
+	parser.add_argument('--instrument', help="Instrument name (defaults to the folder name)")
 	parser.add_argument('--rr-only', action='store_true',
 		help="Treat a single trailing number as a round-robin index instead of a velocity")
 	parser.add_argument('--recursive', action='store_true',
@@ -245,6 +246,14 @@ def buildRegions(samples):
 
 def main():
 	args = parseArgs()
+
+	folderName = os.path.basename(os.path.normpath(args.folder))
+	if not args.name:
+		args.name = folderName
+	if not args.instrument:
+		args.instrument = folderName
+	if not args.output:
+		args.output = folderName + '.sfz'
 
 	files = findSamples(args.folder, args.recursive)
 	if not files:
