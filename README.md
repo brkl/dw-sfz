@@ -180,6 +180,11 @@ output file's location, even if the input files live in different folders.
 
 Run `mergeSFZ.py -h` for the full list of options.
 
+On Windows, `MergeSFZ.bat` gives you a drag-and-drop front end for
+mergeSFZ.py: drop one or more `.sfz` files onto it, optionally type a bank
+name when prompted (leave empty to keep each file's own bank name), and it
+writes `Merged.sfz` next to the first dropped file.
+
 
 convertSoundBank.py can be used to validate and convert the SFZ file. When
 converted to SF2, global options included within `<global>` will be converted
