@@ -15,7 +15,7 @@ install the required dependencencies on Debian and derived distributions:
 
 ## Usage
 
-There are three programs included:
+There are four programs included:
 
 * createSFZ.py: Takes audio files as input and writes to stdout a SFZ template
 for them.
@@ -23,6 +23,9 @@ for them.
 * createDWSFZ.py: Takes a folder of samples autosampled by DirectWave and
 writes a SFZ instrument, automatically splitting velocity layers and
 round-robins. See "createDWSFZ.py" below.
+
+* mergeSFZ.py: Combines several SFZ files into a single one. See "mergeSFZ.py"
+below.
 
 * convertSoundBank.py: Process a sound bank and writes another file, possibly
 converted to a different format.
@@ -147,6 +150,35 @@ Each run prints a short summary to stderr, e.g.:
 
 As with createSFZ.py, the generated SFZ file may need manual editing (e.g. to
 shorten the instrument name for SF2 compatibility, or to add loop points).
+
+
+### mergeSFZ.py
+
+mergeSFZ.py combines any number of SFZ files into a single one:
+
+    mergeSFZ.py Piano.sfz Drums.sfz -o Combined.sfz
+
+Instrument names are always prefixed with their source file's name (e.g.
+`Piano_Grand Piano`) so instruments never collide between files; if a
+collision still happens, a number is appended.
+
+Bank names ("//+ Name:" hints) are handled like this:
+
+* If `--name` is given, every instrument from every input file is put into a
+  single bank with that name, discarding each file's own bank name:
+
+      mergeSFZ.py Piano.sfz Drums.sfz -o Combined.sfz --name "My Bank"
+
+* Otherwise, each input file keeps its own bank name. Files that share the
+  same bank name are combined under that one bank; files with different bank
+  names each keep their own bank inside the merged file (the SFZ format has
+  only one bank name per file, so in this case each bank's first instrument
+  carries a `//+ Name:` annotation instead of a single top-of-file one).
+
+Sample paths are automatically rewritten to stay correct relative to the
+output file's location, even if the input files live in different folders.
+
+Run `mergeSFZ.py -h` for the full list of options.
 
 
 convertSoundBank.py can be used to validate and convert the SFZ file. When
