@@ -116,7 +116,7 @@ class SFZ:
 
 
 	def processLine(self, line):
-		match = re.search('//\+ ([a-zA-Z0-9_&.+-]+): +(\S.*)$', line)
+		match = re.search(r'//\+ ([a-zA-Z0-9_&.+-]+): +(\S.*)$', line)
 		if match:
 			value = match.group(2)
 			value = value.rstrip()
@@ -159,7 +159,7 @@ class SFZ:
 				return self.processOpcode(opcode, line)
 
 			if line[match.start()] == '=':
-				nextOpcode = re.search('\s[a-zA-Z0-9_]+=', line)
+				nextOpcode = re.search(r'\s[a-zA-Z0-9_]+=', line)
 				if not nextOpcode:
 					raise SFZParseError
 				value = line[:nextOpcode.start()].rstrip()
